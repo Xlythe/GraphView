@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <declare-styleable name="GraphView">
+        <attr name="showGrid" format="boolean" />
+        <attr name="showInlineNumbers" format="boolean" />
+        <attr name="showOutline" format="boolean" />
+        <attr name="panEnabled" format="boolean" />
+        <attr name="zoomEnabled" format="boolean" />
+        <attr name="backgroundColor" format="color|reference" />
+        <attr name="gridColor" format="color|reference" />
+        <attr name="graphColor" format="color|reference" />
+        <attr name="numberTextColor" format="color|reference" />
+    </declare-styleable>
+</resources>
