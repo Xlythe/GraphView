@@ -1,1 +1,1 @@
-include ':app', ':graph-view'
+include ':app', ':android-graph-view'
