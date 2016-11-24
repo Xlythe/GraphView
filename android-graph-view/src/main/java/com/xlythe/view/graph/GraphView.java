@@ -144,7 +144,6 @@ public class GraphView extends View {
             setZoomEnabled(a.getBoolean(R.styleable.GraphView_zoomEnabled, mZoomEnabled));
             setBackgroundColor(a.getColor(R.styleable.GraphView_backgroundColor, mBackgroundPaint.getColor()));
             setGridColor(a.getColor(R.styleable.GraphView_gridColor, mAxisPaint.getColor()));
-            setGraphColor(a.getColor(R.styleable.GraphView_graphColor, mGraphPaint.getColor()));
             setTextColor(a.getColor(R.styleable.GraphView_numberTextColor, mTextPaint.getColor()));
             a.recycle();
         }
@@ -719,10 +718,6 @@ public class GraphView extends View {
     public void setTextColor(int color) {
         mTextPaint.setColor(color);
         invalidate();
-    }
-
-    public void setGraphColor(int color) {
-        mGraphPaint.setColor(color);
     }
 
     public void addPanListener(PanListener l) {

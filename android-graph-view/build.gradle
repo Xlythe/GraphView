@@ -23,7 +23,7 @@ android {
 
 dependencies {
     compile fileTree(dir: 'libs', include: ['*.jar'])
-    compile 'com.android.support:support-v4:25.0.0'
+    compile 'com.android.support:support-v4:25.0.1'
     compile 'com.xlythe:math-library:1.0.0'
 }
 
