@@ -26,6 +26,8 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
 
         mGraphView = (GraphView) findViewById(R.id.graph);
+        mGraphView.setShowInlineNumbers(true); // TODO give option to show all numbers in inline mode
+        mGraphView.setShowOutline(false);
         mGraphView.addPanListener(new GraphView.PanListener() {
             @Override
             public void panApplied() {

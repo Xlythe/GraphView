@@ -8,7 +8,7 @@
         <attr name="zoomEnabled" format="boolean" />
         <attr name="backgroundColor" format="color|reference" />
         <attr name="gridColor" format="color|reference" />
-        <attr name="graphColor" format="color|reference" />
+        <attr name="axisColor" format="color|reference" />
         <attr name="numberTextColor" format="color|reference" />
     </declare-styleable>
 </resources>

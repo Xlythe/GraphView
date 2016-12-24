@@ -10,11 +10,11 @@ import android.graphics.Paint.Style;
 import android.graphics.Rect;
 import android.os.Build;
 import android.os.Looper;
+import android.support.annotation.Nullable;
 import android.util.AttributeSet;
 import android.util.TypedValue;
 import android.view.MotionEvent;
 import android.view.View;
-import android.view.ViewConfiguration;
 
 import com.xlythe.math.Point;
 
@@ -29,23 +29,29 @@ public class GraphView extends View {
     private static final int DOTS = 2;
     private static final int CURVES = 3;
 
-    private static final int GRID_WIDTH = 2;
-    private static final int AXIS_WIDTH = 4;
-    private static final int GRAPH_WIDTH = 6;
     private static final int DRAG = 1;
     private static final int ZOOM = 2;
-    private static final int BOX_STROKE = 6;
 
-    private int mDrawingAlgorithm = LINES;
-    private DecimalFormat mFormat = new DecimalFormat("#.#");
     private final List<PanListener> mPanListeners = new ArrayList<>();
     private final List<ZoomListener> mZoomListeners = new ArrayList<>();
+
+    private final Rect mTempRect = new Rect();
+    private int mDrawingAlgorithm = LINES;
+    private DecimalFormat mFormat = new DecimalFormat("#.#");
+
+    private int mGridWidth;
+    private int mAxisWidth;
+    private int mGraphWidth;
+    private int mBorderWidth;
+
     private Paint mBackgroundPaint;
     private Paint mTextPaint;
+    private Paint mGridPaint;
+    @Nullable
     private Paint mAxisPaint;
     private Paint mGraphPaint;
     private Paint mDebugPaint;
-    private final Rect mTempRect = new Rect();
+
     private int mOffsetX;
     private int mOffsetY;
     private int mLineMargin;
@@ -61,7 +67,6 @@ public class GraphView extends View {
     private int mDragOffsetY;
     private int mDragRemainderX;
     private int mDragRemainderY;
-    private int mTouchSlop;
 
     private int mRemainderX;
     private int mRemainderY;
@@ -78,6 +83,8 @@ public class GraphView extends View {
 
     private boolean mGraphIsCentered = true;
     private OnCenterListener mOnCenterListener;
+    private List<Point> curveCachedData;
+    private List<Point> curveCachedMutatedData;
 
     public GraphView(Context context) {
         super(context);
@@ -101,39 +108,41 @@ public class GraphView extends View {
     }
 
     private void setup(Context context, AttributeSet attrs) {
+        mGridWidth = fromDp(1);
+        mAxisWidth = fromDp(3);
+        mGraphWidth = fromDp(3);
+        mBorderWidth = fromDp(3);
+
         mBackgroundPaint = new Paint();
         mBackgroundPaint.setColor(Color.WHITE);
         mBackgroundPaint.setStyle(Style.FILL);
 
-        mTextMargin = (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 3, getResources().getDisplayMetrics());
-        mTextPaintSize = (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 16, getResources().getDisplayMetrics());
+        mTextMargin = fromDp(3);
+        mTextPaintSize = fromSp(16);
         mTextPaint = new Paint();
         mTextPaint.setColor(Color.BLACK);
         mTextPaint.setTextSize(mTextPaintSize);
 
-        mAxisPaint = new Paint();
-        mAxisPaint.setColor(Color.LTGRAY);
-        mAxisPaint.setStyle(Style.STROKE);
-        mAxisPaint.setStrokeWidth(GRID_WIDTH);
+        mGridPaint = new Paint();
+        mGridPaint.setColor(Color.LTGRAY);
+        mGridPaint.setStyle(Style.STROKE);
+        mGridPaint.setStrokeWidth(mGridWidth);
 
         mGraphPaint = new Paint();
         mGraphPaint.setColor(Color.CYAN);
         mGraphPaint.setStyle(Style.STROKE);
-        mGraphPaint.setStrokeWidth(GRAPH_WIDTH);
+        mGraphPaint.setStrokeWidth(mGraphWidth);
 
         mDebugPaint = new Paint();
         mDebugPaint.setColor(Color.MAGENTA);
         mDebugPaint.setStyle(Style.STROKE);
-        mDebugPaint.setStrokeWidth(GRAPH_WIDTH);
+        mDebugPaint.setStrokeWidth(mGraphWidth);
 
-        ViewConfiguration vc = ViewConfiguration.get(getContext());
-        mTouchSlop = vc.getScaledTouchSlop();
-
-        mLineMargin = mMinLineMargin = (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 25, getResources().getDisplayMetrics());
+        mLineMargin = mMinLineMargin = fromDp(25);
 
         zoomReset();
 
-        mData = new ArrayList();
+        mData = new ArrayList<>();
 
         if (attrs != null) {
             final TypedArray a = context.obtainStyledAttributes(attrs, R.styleable.GraphView, 0, 0);
@@ -143,11 +152,21 @@ public class GraphView extends View {
             setPanEnabled(a.getBoolean(R.styleable.GraphView_panEnabled, mPanEnabled));
             setZoomEnabled(a.getBoolean(R.styleable.GraphView_zoomEnabled, mZoomEnabled));
             setBackgroundColor(a.getColor(R.styleable.GraphView_backgroundColor, mBackgroundPaint.getColor()));
-            setGridColor(a.getColor(R.styleable.GraphView_gridColor, mAxisPaint.getColor()));
-            setGraphColor(a.getColor(R.styleable.GraphView_graphColor, mGraphPaint.getColor()));
+            setGridColor(a.getColor(R.styleable.GraphView_gridColor, mGridPaint.getColor()));
+            if (a.hasValue(R.styleable.GraphView_axisColor)) {
+                setAxisColor(a.getColor(R.styleable.GraphView_gridColor, mGridPaint.getColor()));
+            }
             setTextColor(a.getColor(R.styleable.GraphView_numberTextColor, mTextPaint.getColor()));
             a.recycle();
         }
+    }
+
+    private int fromDp(int dp) {
+        return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, dp, getResources().getDisplayMetrics());
+    }
+
+    private int fromSp(int sp) {
+        return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, sp, getResources().getDisplayMetrics());
     }
 
     public void zoomReset() {
@@ -169,19 +188,9 @@ public class GraphView extends View {
         }
     }
 
-    private Point average(Point... args) {
-        float x = 0;
-        float y = 0;
-        for (Point p : args) {
-            x += p.getX();
-            y += p.getY();
-        }
-        return new Point(x / args.length, y / args.length);
-    }
-
     @Override
     public boolean onTouchEvent(MotionEvent event) {
-        if (mPanEnabled != true && mZoomEnabled != true) {
+        if (!mPanEnabled && !mZoomEnabled) {
             return super.onTouchEvent(event);
         }
 
@@ -190,7 +199,7 @@ public class GraphView extends View {
             setMode(event);
         }
 
-        switch(event.getAction()) {
+        switch (event.getAction()) {
             case MotionEvent.ACTION_DOWN:
                 setMode(event);
                 break;
@@ -279,16 +288,17 @@ public class GraphView extends View {
         canvas.drawPaint(mBackgroundPaint);
 
         // Draw bounding box
-        mAxisPaint.setStrokeWidth(BOX_STROKE);
+        mGridPaint.setStrokeWidth(mBorderWidth);
         if (mShowOutline) {
             canvas.drawRect(mLineMargin, mLineMargin,
-                    getWidth() - BOX_STROKE / 2, getHeight() - BOX_STROKE / 2, mAxisPaint);
+                    getWidth() - mBorderWidth / 2, getHeight() - mBorderWidth / 2, mGridPaint);
         }
 
         // Draw the grid lines
         Rect bounds = mTempRect;
         int previousLine = 0;
         boolean inlineNumbersDrawn = !mInlineNumbers;
+        Paint axisPaint = mAxisPaint == null ? mGridPaint : mAxisPaint;
         for (int i = mInlineNumbers ? 0 : 1, j = mOffsetX; i * mLineMargin < getWidth(); i++, j++) {
             // Draw vertical lines
             int x = i * mLineMargin + mRemainderX;
@@ -296,11 +306,11 @@ public class GraphView extends View {
             previousLine = x;
 
             if (j == 0 && mShowAxis) {
-                mAxisPaint.setStrokeWidth(AXIS_WIDTH);
-                canvas.drawLine(x, mInlineNumbers ? 0 : mLineMargin, x, getHeight(), mAxisPaint);
+                axisPaint.setStrokeWidth(mAxisWidth);
+                canvas.drawLine(x, mInlineNumbers ? 0 : mLineMargin, x, getHeight(), mGridPaint);
             } else if (mShowGrid) {
-                mAxisPaint.setStrokeWidth(GRID_WIDTH);
-                canvas.drawLine(x, mInlineNumbers ? 0 : mLineMargin, x, getHeight(), mAxisPaint);
+                mGridPaint.setStrokeWidth(mGridWidth);
+                canvas.drawLine(x, mInlineNumbers ? 0 : mLineMargin, x, getHeight(), mGridPaint);
             }
 
             if (!mInlineNumbers) {
@@ -378,11 +388,11 @@ public class GraphView extends View {
             previousLine = y;
 
             if (j == 0 && mShowAxis) {
-                mAxisPaint.setStrokeWidth(AXIS_WIDTH);
-                canvas.drawLine(mInlineNumbers ? 0 : mLineMargin, y, getWidth(), y, mAxisPaint);
+                axisPaint.setStrokeWidth(mAxisWidth);
+                canvas.drawLine(mInlineNumbers ? 0 : mLineMargin, y, getWidth(), y, mGridPaint);
             } else if (mShowGrid) {
-                mAxisPaint.setStrokeWidth(GRID_WIDTH);
-                canvas.drawLine(mInlineNumbers ? 0 : mLineMargin, y, getWidth(), y, mAxisPaint);
+                mGridPaint.setStrokeWidth(mGridWidth);
+                canvas.drawLine(mInlineNumbers ? 0 : mLineMargin, y, getWidth(), y, mGridPaint);
             }
 
             if (!mInlineNumbers) {
@@ -455,7 +465,7 @@ public class GraphView extends View {
         // Restrict drawing the graph to the grid
         if (!mInlineNumbers) {
             canvas.clipRect(mLineMargin, mLineMargin,
-                    getWidth() - BOX_STROKE, getHeight() - BOX_STROKE);
+                    getWidth() - mBorderWidth, getHeight() - mBorderWidth);
         }
 
         // Create a path to draw smooth arcs
@@ -505,9 +515,6 @@ public class GraphView extends View {
         }
     }
 
-    private List<Point> curveCachedData;
-    private List<Point> curveCachedMutatedData;
-
     private void drawWithCurves(List<Point> data, Canvas canvas, Paint paint) {
         if (curveCachedData == data) {
             drawWithStraightLines(curveCachedMutatedData, canvas, paint);
@@ -529,28 +536,28 @@ public class GraphView extends View {
 
         // 1. loop goes through point array
         // 2. loop goes through each segment between the 2 pts + 1e point before and after
-        for (int i = 1; i < data.size() - 2; i ++) {
-            for (int t=0; t <= numOfSegments; t++) {
+        for (int i = 1; i < data.size() - 2; i++) {
+            for (int t = 0; t <= numOfSegments; t++) {
 
                 // calc tension vectors
-                float t1x = (data.get(i+1).getX() - data.get(i-1).getX()) * tension;
-                float t2x = (data.get(i+2).getX() - data.get(i).getX()) * tension;
+                float t1x = (data.get(i + 1).getX() - data.get(i - 1).getX()) * tension;
+                float t2x = (data.get(i + 2).getX() - data.get(i).getX()) * tension;
 
-                float t1y = (data.get(i+1).getY() - data.get(i-1).getY()) * tension;
-                float t2y = (data.get(i+2).getY() - data.get(i).getY()) * tension;
+                float t1y = (data.get(i + 1).getY() - data.get(i - 1).getY()) * tension;
+                float t2y = (data.get(i + 2).getY() - data.get(i).getY()) * tension;
 
                 // calc step
                 float st = t / numOfSegments;
 
                 // calc cardinals
-                double c1 =   2 * Math.pow(st, 3)  - 3 * Math.pow(st, 2) + 1;
+                double c1 = 2 * Math.pow(st, 3) - 3 * Math.pow(st, 2) + 1;
                 double c2 = -(2 * Math.pow(st, 3)) + 3 * Math.pow(st, 2);
-                double c3 =       Math.pow(st, 3)  - 2 * Math.pow(st, 2) + st;
-                double c4 =       Math.pow(st, 3)  -     Math.pow(st, 2);
+                double c3 = Math.pow(st, 3) - 2 * Math.pow(st, 2) + st;
+                double c4 = Math.pow(st, 3) - Math.pow(st, 2);
 
                 // calc x and y cords with common control vectors
-                float x = (float) (c1 * data.get(i).getX() + c2 * data.get(i+1).getX() + c3 * t1x + c4 * t2x);
-                float y = (float) (c1 * data.get(i).getY() + c2 * data.get(i+1).getY() + c3 * t1y + c4 * t2y);
+                float x = (float) (c1 * data.get(i).getX() + c2 * data.get(i + 1).getX() + c3 * t1x + c4 * t2x);
+                float y = (float) (c1 * data.get(i).getY() + c2 * data.get(i + 1).getY() + c3 * t1y + c4 * t2y);
 
                 //store points in array
                 newData.add(new Point(x, y));
@@ -574,9 +581,7 @@ public class GraphView extends View {
         // And changes at a rate of
         float slope = mLineMargin / mZoomLevel;
         // Put it all together
-        int pos = (int) (slope * (p.getX() - val) + leftLine);
-
-        return pos;
+        return (int) (slope * (p.getX() - val) + leftLine);
     }
 
     private int getRawY(Point p) {
@@ -589,9 +594,7 @@ public class GraphView extends View {
         // And changes at a rate of
         float slope = mLineMargin / mZoomLevel;
         // Put it all together
-        int pos = (int) (-slope * (p.getY() - val) + topLine);
-
-        return pos;
+        return (int) (-slope * (p.getY() - val) + topLine);
     }
 
     private boolean tooFar(float aX, float aY, float bX, float bY) {
@@ -628,7 +631,7 @@ public class GraphView extends View {
 
     private void setMode(MotionEvent e) {
         mPointers = e.getPointerCount();
-        switch(e.getPointerCount()) {
+        switch (e.getPointerCount()) {
             case 1:
                 // Drag
                 setMode(DRAG, e);
@@ -642,7 +645,7 @@ public class GraphView extends View {
 
     private void setMode(int mode, MotionEvent e) {
         mMode = mode;
-        switch(mode) {
+        switch (mode) {
             case DRAG:
                 mStartX = e.getX();
                 mStartY = e.getY();
@@ -713,6 +716,16 @@ public class GraphView extends View {
     }
 
     public void setGridColor(int color) {
+        mGridPaint.setColor(color);
+    }
+
+    public void setAxisColor(int color) {
+        if (mAxisPaint == null) {
+            mAxisPaint = new Paint();
+            mAxisPaint.setColor(Color.LTGRAY);
+            mAxisPaint.setStyle(Style.STROKE);
+            mAxisPaint.setStrokeWidth(mGridWidth);
+        }
         mAxisPaint.setColor(color);
     }
 
@@ -721,8 +734,26 @@ public class GraphView extends View {
         invalidate();
     }
 
-    public void setGraphColor(int color) {
-        mGraphPaint.setColor(color);
+    public void setGridSize(int px) {
+        mGridWidth = px;
+        mGridPaint.setStrokeWidth(mGridWidth);
+        if (mAxisPaint != null) {
+            mAxisPaint.setStrokeWidth(mGridWidth);
+        }
+    }
+
+    public void setAxisSize(int px) {
+        mAxisWidth = px;
+    }
+
+    public void setGraphSize(int px) {
+        mGraphWidth = px;
+        mGraphPaint.setStrokeWidth(mGraphWidth);
+        mDebugPaint.setStrokeWidth(mGraphWidth);
+    }
+
+    public void setBorderSize(int px) {
+        mBorderWidth = px;
     }
 
     public void addPanListener(PanListener l) {
@@ -821,36 +852,36 @@ public class GraphView extends View {
             this.data = data;
         }
 
-        public void setFormula(String formula) {
-            this.formula = formula;
-        }
-
         public String getFormula() {
             return formula;
         }
 
-        public void setColor(int color) {
-            this.color = color;
+        public void setFormula(String formula) {
+            this.formula = formula;
         }
 
         public int getColor() {
             return color;
         }
 
-        public void setData(List<Point> data) {
-            this.data = data;
+        public void setColor(int color) {
+            this.color = color;
         }
 
         public List<Point> getData() {
             return data;
         }
 
-        public void setVisible(boolean visible) {
-            this.visible = visible;
+        public void setData(List<Point> data) {
+            this.data = data;
         }
 
         public boolean isVisible() {
             return visible;
+        }
+
+        public void setVisible(boolean visible) {
+            this.visible = visible;
         }
 
         @Override
