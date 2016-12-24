@@ -154,7 +154,7 @@ public class GraphView extends View {
             setBackgroundColor(a.getColor(R.styleable.GraphView_backgroundColor, mBackgroundPaint.getColor()));
             setGridColor(a.getColor(R.styleable.GraphView_gridColor, mGridPaint.getColor()));
             if (a.hasValue(R.styleable.GraphView_axisColor)) {
-                setAxisColor(a.getColor(R.styleable.GraphView_gridColor, mGridPaint.getColor()));
+                setAxisColor(a.getColor(R.styleable.GraphView_axisColor, mGridPaint.getColor()));
             }
             setTextColor(a.getColor(R.styleable.GraphView_numberTextColor, mTextPaint.getColor()));
             a.recycle();
