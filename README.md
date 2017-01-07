@@ -1,14 +1,14 @@
 Graph View
 ==========
 
-A View/Fragment that display a graph.
+An Android View that display a graph.
 
 
 Where to Download
 -----------------
 ```groovy
 dependencies {
-  compile 'com.xlythe:graph-view:1.0.2'
+  compile 'com.xlythe:android-graph-view:1.0.1'
 }
 ```
 
