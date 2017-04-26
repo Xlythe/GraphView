@@ -1,7 +1,7 @@
 Graph View
 ==========
 
-A View/Fragment that display a graph.
+A View that displays a graph.
 
 
 Where to Download
