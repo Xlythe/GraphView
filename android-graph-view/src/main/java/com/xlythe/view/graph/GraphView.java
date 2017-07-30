@@ -151,7 +151,7 @@ public class GraphView extends View {
             setShowOutline(a.getBoolean(R.styleable.GraphView_showOutline, mShowOutline));
             setPanEnabled(a.getBoolean(R.styleable.GraphView_panEnabled, mPanEnabled));
             setZoomEnabled(a.getBoolean(R.styleable.GraphView_zoomEnabled, mZoomEnabled));
-            setBackgroundColor(a.getColor(R.styleable.GraphView_backgroundColor, mBackgroundPaint.getColor()));
+            setBackgroundColor(a.getColor(R.styleable.GraphView_graphBackgroundColor, mBackgroundPaint.getColor()));
             setGridColor(a.getColor(R.styleable.GraphView_gridColor, mGridPaint.getColor()));
             if (a.hasValue(R.styleable.GraphView_axisColor)) {
                 setAxisColor(a.getColor(R.styleable.GraphView_axisColor, mGridPaint.getColor()));
