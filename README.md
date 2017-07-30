@@ -8,7 +8,7 @@ Where to Download
 -----------------
 ```groovy
 dependencies {
-  compile 'com.xlythe:android-graph-view:1.0.2'
+  compile 'com.xlythe:android-graph-view:1.0.3'
 }
 ```
 
