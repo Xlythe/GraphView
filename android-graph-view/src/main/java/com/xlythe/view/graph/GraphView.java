@@ -1,5 +1,6 @@
 package com.xlythe.view.graph;
 
+import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.content.Context;
 import android.content.res.TypedArray;
@@ -22,6 +23,7 @@ import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.List;
 
+@SuppressWarnings({"FieldCanBeLocal", "SameParameterValue", "WeakerAccess", "unused"})
 public class GraphView extends View {
     private static final boolean DEBUG = false;
 
@@ -36,8 +38,8 @@ public class GraphView extends View {
     private final List<ZoomListener> mZoomListeners = new ArrayList<>();
 
     private final Rect mTempRect = new Rect();
-    private int mDrawingAlgorithm = LINES;
-    private DecimalFormat mFormat = new DecimalFormat("#.#");
+    private final int mDrawingAlgorithm = LINES;
+    private final DecimalFormat mFormat = new DecimalFormat("#.#");
 
     private int mGridWidth;
     private int mAxisWidth;
@@ -188,6 +190,7 @@ public class GraphView extends View {
         }
     }
 
+    @SuppressLint("ClickableViewAccessibility")
     @Override
     public boolean onTouchEvent(MotionEvent event) {
         if (!mPanEnabled && !mZoomEnabled) {
@@ -281,6 +284,7 @@ public class GraphView extends View {
         }
     }
 
+    @SuppressWarnings("ConstantConditions")
     @Override
     public void draw(Canvas canvas) {
         super.draw(canvas);
@@ -601,9 +605,9 @@ public class GraphView extends View {
         boolean outOfBounds = aX == -1 || aY == -1 || bX == -1 || bY == -1;
         if (outOfBounds) return true;
 
-        boolean horzAsymptote = (aX > getXAxisMax() && bX < getXAxisMin()) || (aX < getXAxisMin() && bX > getXAxisMax());
-        boolean vertAsymptote = (aY > getYAxisMax() && bY < getYAxisMin()) || (aY < getYAxisMin() && bY > getYAxisMax());
-        return horzAsymptote || vertAsymptote;
+        boolean horizontalAsymptote = (aX > getXAxisMax() && bX < getXAxisMin()) || (aX < getXAxisMin() && bX > getXAxisMax());
+        boolean verticalAsymptote = (aY > getYAxisMax() && bY < getYAxisMin()) || (aY < getYAxisMin() && bY > getYAxisMax());
+        return horizontalAsymptote || verticalAsymptote;
     }
 
     public float getXAxisMin() {

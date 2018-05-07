@@ -25,23 +25,13 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        mGraphView = (GraphView) findViewById(R.id.graph);
+        mGraphView = findViewById(R.id.graph);
         mGraphView.setShowInlineNumbers(true); // TODO give option to show all numbers in inline mode
         mGraphView.setShowOutline(false);
-        mGraphView.addPanListener(new GraphView.PanListener() {
-            @Override
-            public void panApplied() {
-                invalidateFormula();
-            }
-        });
-        mGraphView.addZoomListener(new GraphView.ZoomListener() {
-            @Override
-            public void zoomApplied(float level) {
-                invalidateFormula();
-            }
-        });
+        mGraphView.addPanListener(this::invalidateFormula);
+        mGraphView.addZoomListener(level -> invalidateFormula());
 
-        mFormulaView = (EditText) findViewById(R.id.formula);
+        mFormulaView = findViewById(R.id.formula);
         mFormulaView.addTextChangedListener(new TextWatcher() {
             @Override
             public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
@@ -61,12 +51,9 @@ public class MainActivity extends AppCompatActivity {
 
         mGraphModule.setDomain(mGraphView.getXAxisMin(), mGraphView.getXAxisMax());
         mGraphModule.setRange(mGraphView.getYAxisMin(), mGraphView.getYAxisMax());
-        mGraphModule.updateGraph(formula, new GraphModule.OnGraphUpdatedListener() {
-            @Override
-            public void onGraphUpdated(List<Point> result) {
-                mGraphView.clearGraphs();
-                mGraphView.addGraph(new GraphView.Graph(formula, 0xff00bcd4, result));
-            }
+        mGraphModule.updateGraph(formula, result -> {
+            mGraphView.clearGraphs();
+            mGraphView.addGraph(new GraphView.Graph(formula, 0xff00bcd4, result));
         });
     }
 }
