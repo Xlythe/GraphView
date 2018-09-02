@@ -46,6 +46,9 @@ public class MainActivity extends AppCompatActivity {
 
     private void invalidateFormula() {
         final String formula = mFormulaView.getText().toString();
+        if (formula.isEmpty()) {
+            return;
+        }
 
         mGraphModule.setDomain(mGraphView.getXAxisMin(), mGraphView.getXAxisMax());
         mGraphModule.setRange(mGraphView.getYAxisMin(), mGraphView.getYAxisMax());
