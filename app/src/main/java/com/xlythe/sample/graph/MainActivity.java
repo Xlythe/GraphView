@@ -1,17 +1,15 @@
 package com.xlythe.sample.graph;
 
 import android.os.Bundle;
-import android.support.v7.app.AppCompatActivity;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.widget.EditText;
 
 import com.xlythe.math.GraphModule;
-import com.xlythe.math.Point;
 import com.xlythe.math.Solver;
 import com.xlythe.view.graph.GraphView;
 
-import java.util.List;
+import androidx.appcompat.app.AppCompatActivity;
 
 public class MainActivity extends AppCompatActivity {
 

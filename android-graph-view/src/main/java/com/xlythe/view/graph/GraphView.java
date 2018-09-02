@@ -11,7 +11,6 @@ import android.graphics.Paint.Style;
 import android.graphics.Rect;
 import android.os.Build;
 import android.os.Looper;
-import android.support.annotation.Nullable;
 import android.util.AttributeSet;
 import android.util.TypedValue;
 import android.view.MotionEvent;
@@ -22,6 +21,8 @@ import com.xlythe.math.Point;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.List;
+
+import androidx.annotation.Nullable;
 
 @SuppressWarnings({"FieldCanBeLocal", "SameParameterValue", "WeakerAccess", "unused"})
 public class GraphView extends View {
