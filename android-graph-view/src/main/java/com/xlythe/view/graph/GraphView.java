@@ -161,7 +161,10 @@ public class GraphView extends View {
         mBackgroundPaint.setStyle(Style.FILL);
 
         mTextMargin = fromDp(3);
-        mTextPaintSize = fromSp(16);
+        // The numbers along the edges live in the band before the first grid line, and that band is
+        // a fixed width. They follow the reader's font size down, and up until they would not fit,
+        // past which they run into each other and out over the graph.
+        mTextPaintSize = Math.min(fromSp(16), fromDp(25) - 2 * mTextMargin);
         mTextPaint = new Paint();
         mTextPaint.setColor(Color.BLACK);
         mTextPaint.setTextSize(mTextPaintSize);
@@ -225,7 +228,9 @@ public class GraphView extends View {
     }
 
     private int fromSp(int sp) {
-        return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, sp, getResources().getDisplayMetrics());
+        // Scaled pixels, not density pixels: text here follows the font size the reader chose, the
+        // same as text anywhere else. Measuring it in dp quietly ignored that setting.
+        return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, sp, getResources().getDisplayMetrics());
     }
 
     public void zoomReset() {
