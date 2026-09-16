@@ -11,6 +11,7 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Paint.Style;
+import android.graphics.Path;
 import android.graphics.Rect;
 import android.os.Build;
 import android.os.Looper;
@@ -18,6 +19,7 @@ import android.util.AttributeSet;
 import android.util.TypedValue;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.view.animation.DecelerateInterpolator;
 
 import com.xlythe.math.Point;
@@ -97,6 +99,24 @@ public class GraphView extends View {
     private boolean mZoomEnabled = true;
     private boolean mInlineNumbers = false;
 
+    private boolean mInspectionEnabled = false;
+    @Nullable
+    private Graph mInspectedGraph;
+    /** Where along the inspected graph the readout sits, in the graph's own units. */
+    private float mInspectedX;
+    private boolean mInspectingArea;
+    private boolean mDraggingInspection;
+    private Paint mInspectionPaint;
+    private Paint mInspectionTextPaint;
+    private int mInspectionRadius;
+    private final Path mAreaPath = new Path();
+    private final DecimalFormat mReadoutFormat = new DecimalFormat("#.###");
+
+    private float mDownX;
+    private float mDownY;
+    private boolean mMovedSinceDown;
+    private int mTouchSlop;
+
     private boolean mGraphIsCentered = true;
     private OnCenterListener mOnCenterListener;
     private List<Point> curveCachedData;
@@ -153,6 +173,16 @@ public class GraphView extends View {
         mDebugPaint.setColor(Color.MAGENTA);
         mDebugPaint.setStyle(Style.STROKE);
         mDebugPaint.setStrokeWidth(mGraphWidth);
+
+        mInspectionPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        mInspectionPaint.setStyle(Style.FILL);
+
+        mInspectionTextPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        mInspectionTextPaint.setColor(Color.BLACK);
+        mInspectionTextPaint.setTextSize(fromSp(14));
+
+        mInspectionRadius = fromDp(7);
+        mTouchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
 
         mLineMargin = mBaseLineMargin = fromDp(25);
         // Grid lines stretch to about a third again as far apart as the base before the numbers on
@@ -211,7 +241,7 @@ public class GraphView extends View {
     @SuppressLint("ClickableViewAccessibility")
     @Override
     public boolean onTouchEvent(MotionEvent event) {
-        if (!mPanEnabled && !mZoomEnabled) {
+        if (!mPanEnabled && !mZoomEnabled && !mInspectionEnabled) {
             return super.onTouchEvent(event);
         }
 
@@ -223,6 +253,10 @@ public class GraphView extends View {
         switch (event.getAction()) {
             case MotionEvent.ACTION_DOWN:
                 setMode(event);
+                mDownX = event.getX();
+                mDownY = event.getY();
+                mMovedSinceDown = false;
+                mDraggingInspection = mInspectionEnabled && isOnTheReadout(mDownX, mDownY);
                 break;
             case MotionEvent.ACTION_UP:
                 if (mMode == ZOOM) {
@@ -230,9 +264,19 @@ public class GraphView extends View {
                     // viewport. Now that the fingers are up, it is worth the work.
                     notifyZoomed();
                 }
+                if (mInspectionEnabled && !mMovedSinceDown && !mDraggingInspection) {
+                    inspectAt(mDownX, mDownY);
+                }
+                mDraggingInspection = false;
                 break;
             case MotionEvent.ACTION_MOVE:
-                if (mMode == DRAG && mPanEnabled) {
+                if (!mMovedSinceDown
+                        && Math.hypot(event.getX() - mDownX, event.getY() - mDownY) > mTouchSlop) {
+                    mMovedSinceDown = true;
+                }
+                if (mDraggingInspection) {
+                    dragReadoutTo(event.getX());
+                } else if (mMode == DRAG && mPanEnabled) {
                     float deltaX = event.getX() - mStartX;
                     float deltaY = event.getY() - mStartY;
 
@@ -512,6 +556,8 @@ public class GraphView extends View {
                 }
             }
         }
+
+        drawInspection(canvas);
 
         if (DEBUG) {
             canvas.drawLine(0, getHeight() / 2, getWidth(), getHeight() / 2, mDebugPaint);
@@ -858,6 +904,8 @@ public class GraphView extends View {
         }
 
         mData.clear();
+        mInspectedGraph = null;
+        mInspectingArea = false;
         postInvalidate();
     }
 
@@ -893,6 +941,7 @@ public class GraphView extends View {
 
     public void setTextColor(int color) {
         mTextPaint.setColor(color);
+        mInspectionTextPaint.setColor(color);
         invalidate();
     }
 
@@ -998,6 +1047,332 @@ public class GraphView extends View {
         int linesY = (int) Math.floor((double) mRemainderY / mLineMargin);
         mOffsetY -= linesY;
         mRemainderY -= linesY * mLineMargin;
+    }
+
+    /**
+     * Lets a tap on the graph put a readout on it: tap a curve for the value and slope at that
+     * point, and drag the circle along the curve to read off other points; tap the space between a
+     * curve and the x axis to shade it in and read off the area.
+     *
+     * <p>Off by default, because a graph small enough to be a thumbnail has no room for it.
+     */
+    public void setInspectionEnabled(boolean enabled) {
+        mInspectionEnabled = enabled;
+        if (!enabled) {
+            clearInspection();
+        }
+    }
+
+    public boolean isInspectionEnabled() {
+        return mInspectionEnabled;
+    }
+
+    /** Takes the readout back off the graph. */
+    public void clearInspection() {
+        mInspectedGraph = null;
+        mInspectingArea = false;
+        mDraggingInspection = false;
+        invalidate();
+    }
+
+    /** The graph the readout is on, or null when there isn't one. */
+    @Nullable
+    public Graph getInspectedGraph() {
+        return mInspectedGraph;
+    }
+
+    /** True when the readout is showing the shaded area rather than a point on the curve. */
+    public boolean isInspectingArea() {
+        return mInspectedGraph != null && mInspectingArea;
+    }
+
+    /** Where along the graph the readout sits, in the graph's own units. */
+    public float getInspectedX() {
+        return mInspectedX;
+    }
+
+    private void inspectAt(float pixelX, float pixelY) {
+        Graph onTheCurve = graphNearPoint(pixelX, pixelY);
+        if (onTheCurve != null) {
+            mInspectedGraph = onTheCurve;
+            mInspectingArea = false;
+        } else {
+            mInspectedGraph = graphOverPoint(pixelX, pixelY);
+            mInspectingArea = mInspectedGraph != null;
+        }
+        mInspectedX = toGraphX(pixelX);
+        invalidate();
+    }
+
+    private void dragReadoutTo(float pixelX) {
+        mInspectedX = toGraphX(pixelX);
+        invalidate();
+    }
+
+    /** True when this touch landed on the circle, which is a little larger than it is drawn. */
+    private boolean isOnTheReadout(float pixelX, float pixelY) {
+        if (mInspectedGraph == null || mInspectingArea) {
+            return false;
+        }
+
+        Float y = valueAt(mInspectedGraph, mInspectedX);
+        if (y == null) {
+            return false;
+        }
+        double distance = Math.hypot(pixelX - toPixelX(mInspectedX), pixelY - toPixelY(y));
+        return distance <= mInspectionRadius * 3;
+    }
+
+    /** The visible curve passing nearest this point, if one passes close enough to have been meant. */
+    @Nullable
+    private Graph graphNearPoint(float pixelX, float pixelY) {
+        Graph nearest = null;
+        double nearestDistance = mTouchSlop * 2;
+        for (Graph graph : mData) {
+            if (!graph.isVisible()) {
+                continue;
+            }
+
+            List<Point> data = graph.getData();
+            for (int i = 1; i < data.size(); i++) {
+                float aX = toPixelX(data.get(i - 1).getX());
+                float aY = toPixelY(data.get(i - 1).getY());
+                float bX = toPixelX(data.get(i).getX());
+                float bY = toPixelY(data.get(i).getY());
+                if (!isReal(aX) || !isReal(aY) || !isReal(bX) || !isReal(bY)) {
+                    continue;
+                }
+
+                double distance = distanceToSegment(pixelX, pixelY, aX, aY, bX, bY);
+                if (distance < nearestDistance) {
+                    nearestDistance = distance;
+                    nearest = graph;
+                }
+            }
+        }
+        return nearest;
+    }
+
+    /** The visible curve this point sits underneath, in the space between the curve and the axis. */
+    @Nullable
+    private Graph graphOverPoint(float pixelX, float pixelY) {
+        float x = toGraphX(pixelX);
+        float y = toGraphY(pixelY);
+        for (Graph graph : mData) {
+            if (!graph.isVisible()) {
+                continue;
+            }
+
+            Float curve = valueAt(graph, x);
+            if (curve != null && ((y >= 0 && y <= curve) || (y <= 0 && y >= curve))) {
+                return graph;
+            }
+        }
+        return null;
+    }
+
+    /** The two points either side of this x, or null where the graph doesn't reach. */
+    @Nullable
+    private static Point[] segmentAt(Graph graph, float x) {
+        List<Point> data = graph.getData();
+        for (int i = 1; i < data.size(); i++) {
+            Point a = data.get(i - 1);
+            Point b = data.get(i);
+            if (!isReal(a.getX()) || !isReal(b.getX())) {
+                continue;
+            }
+            if ((x >= a.getX() && x <= b.getX()) || (x >= b.getX() && x <= a.getX())) {
+                return new Point[] {a, b};
+            }
+        }
+        return null;
+    }
+
+    @Nullable
+    static Float valueAt(Graph graph, float x) {
+        Point[] segment = segmentAt(graph, x);
+        if (segment == null || !isReal(segment[0].getY()) || !isReal(segment[1].getY())) {
+            return null;
+        }
+
+        float aX = segment[0].getX();
+        float bX = segment[1].getX();
+        if (aX == bX) {
+            return segment[0].getY();
+        }
+        return segment[0].getY() + (segment[1].getY() - segment[0].getY()) * (x - aX) / (bX - aX);
+    }
+
+    /** How steeply the graph is climbing at this x, measured across the step either side of it. */
+    @Nullable
+    static Float slopeAt(Graph graph, float x) {
+        Point[] segment = segmentAt(graph, x);
+        if (segment == null || segment[0].getX() == segment[1].getX()
+                || !isReal(segment[0].getY()) || !isReal(segment[1].getY())) {
+            return null;
+        }
+        return (segment[1].getY() - segment[0].getY()) / (segment[1].getX() - segment[0].getX());
+    }
+
+    /** The area between the curve and the x axis, counting anything below the axis as negative. */
+    static float areaUnder(Graph graph, float from, float to) {
+        List<Point> data = graph.getData();
+        float area = 0;
+        for (int i = 1; i < data.size(); i++) {
+            float aX = data.get(i - 1).getX();
+            float aY = data.get(i - 1).getY();
+            float bX = data.get(i).getX();
+            float bY = data.get(i).getY();
+            if (bX < aX) {
+                float swap = aX; aX = bX; bX = swap;
+                swap = aY; aY = bY; bY = swap;
+            }
+            if (bX <= from || aX >= to || aX == bX
+                    || !isReal(aX) || !isReal(bX) || !isReal(aY) || !isReal(bY)) {
+                continue;
+            }
+
+            // Trapezoid, with the ends trimmed to the window we're measuring.
+            float left = Math.max(aX, from);
+            float right = Math.min(bX, to);
+            float leftY = aY + (bY - aY) * (left - aX) / (bX - aX);
+            float rightY = aY + (bY - aY) * (right - aX) / (bX - aX);
+            area += (leftY + rightY) / 2 * (right - left);
+        }
+        return area;
+    }
+
+    private void drawInspection(Canvas canvas) {
+        // Turning inspection off clears the graph it was on, so there is nothing to draw either way.
+        Graph graph = mInspectedGraph;
+        if (graph == null || !graph.isVisible()) {
+            return;
+        }
+
+        if (mInspectingArea) {
+            drawAreaUnder(canvas, graph);
+        } else {
+            drawPointOn(canvas, graph);
+        }
+    }
+
+    private void drawPointOn(Canvas canvas, Graph graph) {
+        Float y = valueAt(graph, mInspectedX);
+        if (y == null) {
+            return;
+        }
+
+        float pixelX = toPixelX(mInspectedX);
+        float pixelY = toPixelY(y);
+        if (!isReal(pixelX) || !isReal(pixelY)) {
+            return;
+        }
+
+        // A ring rather than a dot, so the curve stays visible through it.
+        mInspectionPaint.setStyle(Style.FILL);
+        mInspectionPaint.setColor(graph.getColor());
+        canvas.drawCircle(pixelX, pixelY, mInspectionRadius, mInspectionPaint);
+        mInspectionPaint.setColor(mBackgroundPaint.getColor());
+        canvas.drawCircle(pixelX, pixelY, mInspectionRadius - mGraphWidth, mInspectionPaint);
+
+        Float slope = slopeAt(graph, mInspectedX);
+        drawReadout(canvas, pixelX, pixelY - mInspectionRadius * 2,
+                mReadoutFormat.format(mInspectedX) + ", " + mReadoutFormat.format(y),
+                slope == null ? null : "dy/dx = " + mReadoutFormat.format(slope));
+    }
+
+    private void drawAreaUnder(Canvas canvas, Graph graph) {
+        float from = toGraphX(mInlineNumbers ? 0 : mLineMargin);
+        float to = toGraphX(getWidth());
+        float axis = toPixelY(0);
+        if (!isReal(axis)) {
+            return;
+        }
+
+        // Curves run off to infinity around an asymptote. Keep the path near the view or it costs a
+        // great deal to fill and shows nothing extra.
+        float ceiling = -getHeight();
+        float floor = 2f * getHeight();
+
+        mAreaPath.reset();
+        boolean started = false;
+        float lastX = 0;
+        for (Point point : graph.getData()) {
+            float x = point.getX();
+            if (!isReal(x) || x < from || x > to) {
+                continue;
+            }
+
+            float pixelX = toPixelX(x);
+            float pixelY = toPixelY(point.getY());
+            if (!isReal(pixelX) || !isReal(pixelY)) {
+                continue;
+            }
+            pixelY = Math.max(ceiling, Math.min(floor, pixelY));
+
+            if (!started) {
+                mAreaPath.moveTo(pixelX, axis);
+                started = true;
+            }
+            mAreaPath.lineTo(pixelX, pixelY);
+            lastX = pixelX;
+        }
+        if (!started) {
+            return;
+        }
+
+        mAreaPath.lineTo(lastX, axis);
+        mAreaPath.close();
+
+        mInspectionPaint.setStyle(Style.FILL);
+        mInspectionPaint.setColor((graph.getColor() & 0x00ffffff) | 0x50000000);
+        canvas.drawPath(mAreaPath, mInspectionPaint);
+
+        drawReadout(canvas, getWidth() / 2f, axis,
+                "∫ = " + mReadoutFormat.format(areaUnder(graph, from, to)), null);
+    }
+
+    /** A small card of one or two lines, sitting above ({@code pixelX}, {@code pixelY}). */
+    private void drawReadout(Canvas canvas, float pixelX, float pixelY,
+                             String first, @Nullable String second) {
+        float padding = fromDp(6);
+        float lineHeight = mInspectionTextPaint.getTextSize() * 1.25f;
+        float width = mInspectionTextPaint.measureText(first);
+        if (second != null) {
+            width = Math.max(width, mInspectionTextPaint.measureText(second));
+        }
+        float height = lineHeight * (second == null ? 1 : 2);
+
+        float left = pixelX - width / 2 - padding;
+        float top = pixelY - height - 2 * padding;
+        left = Math.min(getWidth() - width - 2 * padding, Math.max(0, left));
+        top = Math.max(0, top);
+
+        mInspectionPaint.setStyle(Style.FILL);
+        mInspectionPaint.setColor((mBackgroundPaint.getColor() & 0x00ffffff) | 0xe6000000);
+        canvas.drawRoundRect(left, top, left + width + 2 * padding, top + height + 2 * padding,
+                padding, padding, mInspectionPaint);
+
+        float textY = top + padding + mInspectionTextPaint.getTextSize();
+        canvas.drawText(first, left + padding, textY, mInspectionTextPaint);
+        if (second != null) {
+            canvas.drawText(second, left + padding, textY + lineHeight, mInspectionTextPaint);
+        }
+    }
+
+    private static double distanceToSegment(float x, float y, float aX, float aY, float bX, float bY) {
+        float lengthSquared = (bX - aX) * (bX - aX) + (bY - aY) * (bY - aY);
+        if (lengthSquared == 0) {
+            return Math.hypot(x - aX, y - aY);
+        }
+
+        float along = ((x - aX) * (bX - aX) + (y - aY) * (bY - aY)) / lengthSquared;
+        along = Math.max(0, Math.min(1, along));
+        return Math.hypot(x - (aX + along * (bX - aX)), y - (aY + along * (bY - aY)));
+    }
+
+    private static boolean isReal(float value) {
+        return !Float.isNaN(value) && !Float.isInfinite(value);
     }
 
     public interface PanListener {
