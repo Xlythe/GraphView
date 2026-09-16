@@ -115,6 +115,7 @@ public class GraphView extends View {
     private Paint mInspectionTextPaint;
     private int mInspectionRadius;
     private int mReadoutBorderWidth;
+    private int mSlopeLabelOffset;
     private final Path mAreaPath = new Path();
     private final DecimalFormat mReadoutFormat = new DecimalFormat("#.###");
 
@@ -189,6 +190,7 @@ public class GraphView extends View {
 
         mInspectionRadius = fromDp(7);
         mReadoutBorderWidth = fromDp(2);
+        mSlopeLabelOffset = fromDp(72);
         mTouchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
 
         mLineMargin = mBaseLineMargin = fromDp(25);
@@ -1433,6 +1435,12 @@ public class GraphView extends View {
                     0, pixelY + slope * pixelX,
                     getWidth(), pixelY - slope * (getWidth() - pixelX),
                     mInspectionPaint);
+
+            // The number belongs to the line, so it is set off along it, away from the point. Two
+            // readouts stacked in one box is more than the eye wants to take in at once.
+            float along = pixelX > getWidth() / 2f ? -mSlopeLabelOffset : mSlopeLabelOffset;
+            drawReadout(canvas, pixelX + along, pixelY - slope * along - mInspectionRadius,
+                    graph.getColor(), "dy/dx = " + mReadoutFormat.format(slope));
         }
 
         // A ring rather than a dot, so the curve stays visible through it.
@@ -1443,8 +1451,7 @@ public class GraphView extends View {
         canvas.drawCircle(pixelX, pixelY, mInspectionRadius - mGraphWidth, mInspectionPaint);
 
         drawReadout(canvas, pixelX, pixelY - mInspectionRadius * 2, graph.getColor(),
-                mReadoutFormat.format(mInspectedX) + ", " + mReadoutFormat.format(y),
-                slope == null ? null : "dy/dx = " + mReadoutFormat.format(slope));
+                mReadoutFormat.format(mInspectedX) + ", " + mReadoutFormat.format(y));
     }
 
     /** The stretch of curve the area covers: between the bounds if both are set, else its own. */
@@ -1518,8 +1525,7 @@ public class GraphView extends View {
 
         float middle = (toPixelX(Math.max(from, toGraphX(0)))
                 + toPixelX(Math.min(to, toGraphX(getWidth())))) / 2;
-        drawReadout(canvas, middle, axis, graph.getColor(),
-                "∫ = " + area.describe(mReadoutFormat), null);
+        drawReadout(canvas, middle, axis, graph.getColor(), "∫ = " + area.describe(mReadoutFormat));
     }
 
     /** The edges the area has been cut to, each with a handle on the curve to drag it by. */
@@ -1543,24 +1549,20 @@ public class GraphView extends View {
     }
 
     /**
-     * A small card of one or two lines, sitting above ({@code pixelX}, {@code pixelY}) and outlined
-     * in {@code accent} so it is clear which curve it belongs to.
+     * A small card of one line, sitting above ({@code pixelX}, {@code pixelY}) and outlined in
+     * {@code accent} so it is clear which curve it belongs to.
      */
-    private void drawReadout(Canvas canvas, float pixelX, float pixelY, int accent,
-                             String first, @Nullable String second) {
+    private void drawReadout(Canvas canvas, float pixelX, float pixelY, int accent, String text) {
         float padding = fromDp(8);
-        float lineHeight = mInspectionTextPaint.getTextSize() * 1.25f;
-        float width = mInspectionTextPaint.measureText(first);
-        if (second != null) {
-            width = Math.max(width, mInspectionTextPaint.measureText(second));
-        }
-        float height = lineHeight * (second == null ? 1 : 2);
+        float width = mInspectionTextPaint.measureText(text);
+        float height = mInspectionTextPaint.getTextSize() * 1.25f;
 
         float left = pixelX - width / 2 - padding;
         float top = pixelY - height - 2 * padding;
         left = Math.min(getWidth() - width - 2 * padding - mReadoutBorderWidth,
                 Math.max(mReadoutBorderWidth, left));
-        top = Math.max(mReadoutBorderWidth, top);
+        top = Math.min(getHeight() - height - 2 * padding - mReadoutBorderWidth,
+                Math.max(mReadoutBorderWidth, top));
         float right = left + width + 2 * padding;
         float bottom = top + height + 2 * padding;
 
@@ -1575,11 +1577,8 @@ public class GraphView extends View {
         canvas.drawRoundRect(left, top, right, bottom, padding, padding, mInspectionPaint);
         mInspectionPaint.setStyle(Style.FILL);
 
-        float textY = top + padding + mInspectionTextPaint.getTextSize();
-        canvas.drawText(first, left + padding, textY, mInspectionTextPaint);
-        if (second != null) {
-            canvas.drawText(second, left + padding, textY + lineHeight, mInspectionTextPaint);
-        }
+        canvas.drawText(text, left + padding, top + padding + mInspectionTextPaint.getTextSize(),
+                mInspectionTextPaint);
     }
 
     private static double distanceToSegment(float x, float y, float aX, float aY, float bX, float bY) {
