@@ -105,10 +105,16 @@ public class GraphView extends View {
     /** Where along the inspected graph the readout sits, in the graph's own units. */
     private float mInspectedX;
     private boolean mInspectingArea;
+    /** Where the shaded area has been cut short, in the graph's units. Up to two, in tap order. */
+    private final float[] mAreaBounds = new float[2];
+    private int mAreaBoundCount;
     private boolean mDraggingInspection;
+    /** Which of the two bounds the finger has hold of, or -1 for the point on the curve. */
+    private int mDraggingBound = -1;
     private Paint mInspectionPaint;
     private Paint mInspectionTextPaint;
     private int mInspectionRadius;
+    private int mReadoutBorderWidth;
     private final Path mAreaPath = new Path();
     private final DecimalFormat mReadoutFormat = new DecimalFormat("#.###");
 
@@ -178,10 +184,11 @@ public class GraphView extends View {
         mInspectionPaint.setStyle(Style.FILL);
 
         mInspectionTextPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        mInspectionTextPaint.setColor(Color.BLACK);
+        mInspectionTextPaint.setColor(0xde000000);
         mInspectionTextPaint.setTextSize(fromSp(14));
 
         mInspectionRadius = fromDp(7);
+        mReadoutBorderWidth = fromDp(2);
         mTouchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
 
         mLineMargin = mBaseLineMargin = fromDp(25);
@@ -906,6 +913,7 @@ public class GraphView extends View {
         mData.clear();
         mInspectedGraph = null;
         mInspectingArea = false;
+        mAreaBoundCount = 0;
         postInvalidate();
     }
 
@@ -941,6 +949,14 @@ public class GraphView extends View {
 
     public void setTextColor(int color) {
         mTextPaint.setColor(color);
+        invalidate();
+    }
+
+    /**
+     * The colour of the readout a tap puts on the graph. Kept apart from the colour of the numbers
+     * along the axes, which is usually faint enough to disappear into the grid.
+     */
+    public void setInspectionTextColor(int color) {
         mInspectionTextPaint.setColor(color);
         invalidate();
     }
@@ -1071,8 +1087,19 @@ public class GraphView extends View {
     public void clearInspection() {
         mInspectedGraph = null;
         mInspectingArea = false;
+        mAreaBoundCount = 0;
         mDraggingInspection = false;
         invalidate();
+    }
+
+    /** How many ends of the shaded area have been chosen by tapping the curve, 0 to 2. */
+    public int getAreaBoundCount() {
+        return mAreaBoundCount;
+    }
+
+    /** Where one of those ends sits, in the graph's units. */
+    public float getAreaBound(int index) {
+        return mAreaBounds[index];
     }
 
     /** The graph the readout is on, or null when there isn't one. */
@@ -1093,6 +1120,18 @@ public class GraphView extends View {
 
     private void inspectAt(float pixelX, float pixelY) {
         Graph onTheCurve = graphNearPoint(pixelX, pixelY);
+
+        // With an area already shaded, a tap on its own curve cuts the area short there rather than
+        // throwing it away for a point. Two taps make an area with both ends chosen.
+        if (onTheCurve != null && onTheCurve == mInspectedGraph && mInspectingArea) {
+            if (mAreaBoundCount == mAreaBounds.length) {
+                mAreaBoundCount = 0;
+            }
+            mAreaBounds[mAreaBoundCount++] = toGraphX(pixelX);
+            invalidate();
+            return;
+        }
+
         if (onTheCurve != null) {
             mInspectedGraph = onTheCurve;
             mInspectingArea = false;
@@ -1100,18 +1139,37 @@ public class GraphView extends View {
             mInspectedGraph = graphOverPoint(pixelX, pixelY);
             mInspectingArea = mInspectedGraph != null;
         }
+        mAreaBoundCount = 0;
         mInspectedX = toGraphX(pixelX);
         invalidate();
     }
 
     private void dragReadoutTo(float pixelX) {
-        mInspectedX = toGraphX(pixelX);
+        if (mDraggingBound >= 0) {
+            mAreaBounds[mDraggingBound] = toGraphX(pixelX);
+        } else {
+            mInspectedX = toGraphX(pixelX);
+        }
         invalidate();
     }
 
-    /** True when this touch landed on the circle, which is a little larger than it is drawn. */
+    /**
+     * True when this touch landed on something the readout lets you move: the circle on the curve,
+     * or one of the lines cutting an area short. Both are a little larger to touch than to look at.
+     */
     private boolean isOnTheReadout(float pixelX, float pixelY) {
-        if (mInspectedGraph == null || mInspectingArea) {
+        mDraggingBound = -1;
+        if (mInspectedGraph == null) {
+            return false;
+        }
+
+        if (mInspectingArea) {
+            for (int i = 0; i < mAreaBoundCount; i++) {
+                if (Math.abs(pixelX - toPixelX(mAreaBounds[i])) <= mInspectionRadius * 2) {
+                    mDraggingBound = i;
+                    return true;
+                }
+            }
             return false;
         }
 
@@ -1203,15 +1261,111 @@ public class GraphView extends View {
         return segment[0].getY() + (segment[1].getY() - segment[0].getY()) * (x - aX) / (bX - aX);
     }
 
-    /** How steeply the graph is climbing at this x, measured across the step either side of it. */
+    /** The first sample at or after {@code x}, or -1 where the graph doesn't reach. */
+    private static int indexAfter(List<Point> data, float x) {
+        for (int i = 1; i < data.size(); i++) {
+            if (x >= data.get(i - 1).getX() && x <= data.get(i).getX()) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * How steeply the graph is climbing at this x, measured across the samples either side of the
+     * nearest one. Measured forward from the point instead, the slope leans the way the curve is
+     * bending: on y = x squared it reads 4.1 at x = 2, where the answer is 4.
+     */
     @Nullable
     static Float slopeAt(Graph graph, float x) {
-        Point[] segment = segmentAt(graph, x);
-        if (segment == null || segment[0].getX() == segment[1].getX()
-                || !isReal(segment[0].getY()) || !isReal(segment[1].getY())) {
+        List<Point> data = graph.getData();
+        int after = indexAfter(data, x);
+        if (after < 0) {
             return null;
         }
-        return (segment[1].getY() - segment[0].getY()) / (segment[1].getX() - segment[0].getX());
+
+        int nearest = x - data.get(after - 1).getX() <= data.get(after).getX() - x
+                ? after - 1 : after;
+        Point before = data.get(Math.max(0, nearest - 1));
+        Point beyond = data.get(Math.min(data.size() - 1, nearest + 1));
+        if (before.getX() == beyond.getX()
+                || !isReal(before.getY()) || !isReal(beyond.getY())
+                || !isReal(before.getX()) || !isReal(beyond.getX())) {
+            return null;
+        }
+        return (beyond.getY() - before.getY()) / (beyond.getX() - before.getX());
+    }
+
+    /**
+     * A patch of graph caught between the curve and the x axis. It runs from one crossing of the
+     * axis to the next, which is what closes it off and gives it an area at all. Where the curve
+     * runs off the end of what has been drawn without crossing back, nothing closes it and the
+     * area is infinite.
+     */
+    static class Area {
+        float from;
+        float to;
+        float value;
+        boolean closed;
+
+        /** The area, or the infinity it runs off to, with the sign it goes in. */
+        String describe(DecimalFormat format) {
+            if (closed) {
+                return format.format(value);
+            }
+            return (value < 0 ? "-" : "") + "∞";
+        }
+    }
+
+    /**
+     * The patch of graph between the curve and the axis that {@code x} falls in: from where the
+     * curve last crossed the axis to where it crosses back, or as far as the curve has been drawn.
+     */
+    @Nullable
+    static Area areaAround(Graph graph, float x) {
+        Float here = valueAt(graph, x);
+        if (here == null || here == 0) {
+            return null;
+        }
+
+        List<Point> data = graph.getData();
+        int after = indexAfter(data, x);
+        if (after < 0) {
+            return null;
+        }
+
+        boolean above = here > 0;
+        Area area = new Area();
+        float start = crossing(data, after - 1, -1, above);
+        float end = crossing(data, after, 1, above);
+        area.closed = isReal(start) && isReal(end);
+        area.from = isReal(start) ? start : data.get(0).getX();
+        area.to = isReal(end) ? end : data.get(data.size() - 1).getX();
+        area.value = areaUnder(graph, area.from, area.to);
+        return area;
+    }
+
+    /**
+     * Walks the curve from {@code start} in the given direction until it crosses the axis, and
+     * returns where it crossed. NaN if it never does, or if the curve breaks off first.
+     */
+    private static float crossing(List<Point> data, int start, int step, boolean above) {
+        for (int i = start; i >= 0 && i < data.size(); i += step) {
+            float y = data.get(i).getY();
+            if (!isReal(y) || !isReal(data.get(i).getX())) {
+                return Float.NaN;
+            }
+            if (above ? y < 0 : y > 0) {
+                Point crossed = data.get(i);
+                Point before = data.get(i - step);
+                if (crossed.getY() == before.getY()) {
+                    return crossed.getX();
+                }
+                return crossed.getX() + (before.getX() - crossed.getX())
+                        * (0 - crossed.getY()) / (before.getY() - crossed.getY());
+            }
+        }
+        return Float.NaN;
     }
 
     /** The area between the curve and the x axis, counting anything below the axis as negative. */
@@ -1268,6 +1422,19 @@ public class GraphView extends View {
             return;
         }
 
+        Float slope = slopeAt(graph, mInspectedX);
+        if (slope != null) {
+            // The slope drawn as the line it describes. A pixel is worth the same amount across as
+            // it is up, so the slope carries straight over, with the sign flipped for the screen.
+            mInspectionPaint.setStyle(Style.STROKE);
+            mInspectionPaint.setStrokeWidth(mGraphWidth);
+            mInspectionPaint.setColor(faded(graph.getColor()));
+            canvas.drawLine(
+                    0, pixelY + slope * pixelX,
+                    getWidth(), pixelY - slope * (getWidth() - pixelX),
+                    mInspectionPaint);
+        }
+
         // A ring rather than a dot, so the curve stays visible through it.
         mInspectionPaint.setStyle(Style.FILL);
         mInspectionPaint.setColor(graph.getColor());
@@ -1275,15 +1442,34 @@ public class GraphView extends View {
         mInspectionPaint.setColor(mBackgroundPaint.getColor());
         canvas.drawCircle(pixelX, pixelY, mInspectionRadius - mGraphWidth, mInspectionPaint);
 
-        Float slope = slopeAt(graph, mInspectedX);
-        drawReadout(canvas, pixelX, pixelY - mInspectionRadius * 2,
+        drawReadout(canvas, pixelX, pixelY - mInspectionRadius * 2, graph.getColor(),
                 mReadoutFormat.format(mInspectedX) + ", " + mReadoutFormat.format(y),
                 slope == null ? null : "dy/dx = " + mReadoutFormat.format(slope));
     }
 
+    /** The stretch of curve the area covers: between the bounds if both are set, else its own. */
+    @Nullable
+    private Area currentArea(Graph graph) {
+        if (mAreaBoundCount < mAreaBounds.length) {
+            return areaAround(graph, mInspectedX);
+        }
+
+        Area area = new Area();
+        area.from = Math.min(mAreaBounds[0], mAreaBounds[1]);
+        area.to = Math.max(mAreaBounds[0], mAreaBounds[1]);
+        area.value = areaUnder(graph, area.from, area.to);
+        area.closed = true;
+        return area;
+    }
+
     private void drawAreaUnder(Canvas canvas, Graph graph) {
-        float from = toGraphX(mInlineNumbers ? 0 : mLineMargin);
-        float to = toGraphX(getWidth());
+        Area area = currentArea(graph);
+        if (area == null) {
+            return;
+        }
+
+        float from = area.from;
+        float to = area.to;
         float axis = toPixelY(0);
         if (!isReal(axis)) {
             return;
@@ -1328,14 +1514,41 @@ public class GraphView extends View {
         mInspectionPaint.setColor((graph.getColor() & 0x00ffffff) | 0x50000000);
         canvas.drawPath(mAreaPath, mInspectionPaint);
 
-        drawReadout(canvas, getWidth() / 2f, axis,
-                "∫ = " + mReadoutFormat.format(areaUnder(graph, from, to)), null);
+        drawAreaBounds(canvas, graph, axis);
+
+        float middle = (toPixelX(Math.max(from, toGraphX(0)))
+                + toPixelX(Math.min(to, toGraphX(getWidth())))) / 2;
+        drawReadout(canvas, middle, axis, graph.getColor(),
+                "∫ = " + area.describe(mReadoutFormat), null);
     }
 
-    /** A small card of one or two lines, sitting above ({@code pixelX}, {@code pixelY}). */
-    private void drawReadout(Canvas canvas, float pixelX, float pixelY,
+    /** The edges the area has been cut to, each with a handle on the curve to drag it by. */
+    private void drawAreaBounds(Canvas canvas, Graph graph, float axis) {
+        for (int i = 0; i < mAreaBoundCount; i++) {
+            float pixelX = toPixelX(mAreaBounds[i]);
+            Float y = valueAt(graph, mAreaBounds[i]);
+            if (!isReal(pixelX) || y == null) {
+                continue;
+            }
+
+            float pixelY = toPixelY(y);
+            mInspectionPaint.setStyle(Style.STROKE);
+            mInspectionPaint.setStrokeWidth(mGraphWidth);
+            mInspectionPaint.setColor(graph.getColor());
+            canvas.drawLine(pixelX, pixelY, pixelX, axis, mInspectionPaint);
+
+            mInspectionPaint.setStyle(Style.FILL);
+            canvas.drawCircle(pixelX, pixelY, mInspectionRadius * 0.7f, mInspectionPaint);
+        }
+    }
+
+    /**
+     * A small card of one or two lines, sitting above ({@code pixelX}, {@code pixelY}) and outlined
+     * in {@code accent} so it is clear which curve it belongs to.
+     */
+    private void drawReadout(Canvas canvas, float pixelX, float pixelY, int accent,
                              String first, @Nullable String second) {
-        float padding = fromDp(6);
+        float padding = fromDp(8);
         float lineHeight = mInspectionTextPaint.getTextSize() * 1.25f;
         float width = mInspectionTextPaint.measureText(first);
         if (second != null) {
@@ -1345,13 +1558,22 @@ public class GraphView extends View {
 
         float left = pixelX - width / 2 - padding;
         float top = pixelY - height - 2 * padding;
-        left = Math.min(getWidth() - width - 2 * padding, Math.max(0, left));
-        top = Math.max(0, top);
+        left = Math.min(getWidth() - width - 2 * padding - mReadoutBorderWidth,
+                Math.max(mReadoutBorderWidth, left));
+        top = Math.max(mReadoutBorderWidth, top);
+        float right = left + width + 2 * padding;
+        float bottom = top + height + 2 * padding;
 
+        // Solid, so the curve and grid don't read through the numbers.
         mInspectionPaint.setStyle(Style.FILL);
-        mInspectionPaint.setColor((mBackgroundPaint.getColor() & 0x00ffffff) | 0xe6000000);
-        canvas.drawRoundRect(left, top, left + width + 2 * padding, top + height + 2 * padding,
-                padding, padding, mInspectionPaint);
+        mInspectionPaint.setColor(mBackgroundPaint.getColor() | 0xff000000);
+        canvas.drawRoundRect(left, top, right, bottom, padding, padding, mInspectionPaint);
+
+        mInspectionPaint.setStyle(Style.STROKE);
+        mInspectionPaint.setStrokeWidth(mReadoutBorderWidth);
+        mInspectionPaint.setColor(accent);
+        canvas.drawRoundRect(left, top, right, bottom, padding, padding, mInspectionPaint);
+        mInspectionPaint.setStyle(Style.FILL);
 
         float textY = top + padding + mInspectionTextPaint.getTextSize();
         canvas.drawText(first, left + padding, textY, mInspectionTextPaint);
@@ -1373,6 +1595,11 @@ public class GraphView extends View {
 
     private static boolean isReal(float value) {
         return !Float.isNaN(value) && !Float.isInfinite(value);
+    }
+
+    /** The same colour, faint enough to read as a hint rather than as part of the graph. */
+    private static int faded(int color) {
+        return (color & 0x00ffffff) | 0x66000000;
     }
 
     public interface PanListener {

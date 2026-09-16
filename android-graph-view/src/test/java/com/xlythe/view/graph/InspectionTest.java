@@ -23,6 +23,7 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 import org.robolectric.annotation.GraphicsMode;
 
+import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -53,6 +54,16 @@ public class InspectionTest {
             data.add(new Point(x, slope * x));
         }
         return new GraphView.Graph("Y=" + slope + "X", color, data);
+    }
+
+    /** y = height - x², a hump crossing the axis at the square roots of the height. */
+    private static GraphView.Graph hump(float height, int color) {
+        List<Point> data = new ArrayList<>();
+        for (int step = -100; step <= 100; step++) {
+            float x = step / 10f;
+            data.add(new Point(x, height - x * x));
+        }
+        return new GraphView.Graph("Y=" + height + "-X^2", color, data);
     }
 
     /** Touches the pixel the graph's (x, y) falls on, and lifts off again without moving. */
@@ -102,6 +113,62 @@ public class InspectionTest {
 
         assertSame(line, graph.getInspectedGraph());
         assertTrue(graph.isInspectingArea());
+    }
+
+    /**
+     * Once an area is shaded, tapping its curve cuts the area short there instead of swapping to a
+     * point readout. Two taps give an area with both ends chosen, so even a line that runs off the
+     * screen has an area worth reading.
+     */
+    @Test
+    public void tappingTheCurveOfAShadedArea_cutsTheAreaShort() {
+        GraphView graph = newGraph();
+        GraphView.Graph line = line(1, Color.RED);
+        graph.addGraph(line);
+        tap(graph, 4, 1);
+        assertTrue(graph.isInspectingArea());
+
+        tap(graph, 2, 2);
+
+        assertTrue("the tap should have cut the area, not swapped to a point",
+                graph.isInspectingArea());
+        assertEquals(1, graph.getAreaBoundCount());
+        assertEquals(2, graph.getAreaBound(0), 0.2f);
+
+        tap(graph, 6, 6);
+
+        assertEquals(2, graph.getAreaBoundCount());
+        assertEquals(6, graph.getAreaBound(1), 0.2f);
+    }
+
+    @Test
+    public void aThirdTapOnTheCurve_startsTheBoundsOverAgain() {
+        GraphView graph = newGraph();
+        graph.addGraph(line(1, Color.RED));
+        tap(graph, 4, 1);
+        tap(graph, 2, 2);
+        tap(graph, 6, 6);
+
+        tap(graph, 3, 3);
+
+        assertEquals(1, graph.getAreaBoundCount());
+        assertEquals(3, graph.getAreaBound(0), 0.2f);
+    }
+
+    @Test
+    public void draggingAnEndOfTheArea_movesThatEnd() {
+        GraphView graph = newGraph();
+        graph.addGraph(line(1, Color.RED));
+        tap(graph, 4, 1);
+        tap(graph, 2, 2);
+        tap(graph, 6, 6);
+
+        // Grab the second end, down at the axis rather than up on the curve.
+        drag(graph, 6, 0, 5);
+
+        assertEquals(2, graph.getAreaBoundCount());
+        assertEquals(5, graph.getAreaBound(1), 0.2f);
+        assertEquals("the other end should not have moved", 2, graph.getAreaBound(0), 0.2f);
     }
 
     @Test
@@ -225,6 +292,29 @@ public class InspectionTest {
                 Color.red(clear), Color.blue(clear));
     }
 
+    /** The slope is drawn as the line it describes, not only written out. */
+    @Test
+    public void theSlope_isDrawnAsALineThroughThePoint() {
+        GraphView graph = newGraph();
+        GraphView.Graph hump = hump(4, Color.BLUE);
+        graph.addGraph(hump);
+
+        tap(graph, 1, 3);
+        Bitmap bitmap = render(graph);
+
+        // Two units back along the slope the readout gives, well clear of the curve itself.
+        float x = graph.getInspectedX();
+        float tangent = GraphView.valueAt(hump, x) - 2 * GraphView.slopeAt(hump, x);
+        int onTangent = bitmap.getPixel((int) graph.toPixelX(x - 2), (int) graph.toPixelY(tangent));
+        assertTrue("no tangent line where the slope says one should be, found "
+                + Integer.toHexString(onTangent), Color.blue(onTangent) > Color.red(onTangent) + 16);
+
+        int offTangent = bitmap.getPixel(
+                (int) graph.toPixelX(x - 2), (int) graph.toPixelY(tangent + 1.5f));
+        assertEquals("the tangent was drawn at the wrong slope",
+                Color.red(offTangent), Color.blue(offTangent));
+    }
+
     @Test
     public void theCircle_isDrawnOnTheCurve() {
         GraphView graph = newGraph();
@@ -256,6 +346,59 @@ public class InspectionTest {
     public void theSlopeOfACurve_isMeasuredAcrossTheStepAroundIt() {
         assertEquals(2f, GraphView.slopeAt(line(2, Color.RED), 1.5f), 0.01f);
         assertEquals(-3f, GraphView.slopeAt(line(-3, Color.RED), 1.5f), 0.01f);
+    }
+
+    /**
+     * Measured forward from the point, a curving graph reads its slope a step ahead of where it
+     * was asked: on 4 - x squared at x = 1 it would say -1.9 rather than -2.
+     */
+    @Test
+    public void theSlopeOfABendingCurve_isNotReadAStepAhead() {
+        GraphView.Graph hump = hump(4, Color.RED);
+
+        assertEquals(-2f, GraphView.slopeAt(hump, 1), 0.001f);
+        assertEquals(2f, GraphView.slopeAt(hump, -1), 0.001f);
+        assertEquals("the top of the hump is flat", 0f, GraphView.slopeAt(hump, 0), 0.001f);
+    }
+
+    /** The area is closed off by where the curve crosses the axis, not by the edge of the screen. */
+    @Test
+    public void theAreaUnderAHump_isBoundedByWhereTheCurveCrossesTheAxis() {
+        GraphView.Graph hump = hump(1, Color.RED);
+
+        GraphView.Area area = GraphView.areaAround(hump, 0);
+
+        assertNotNull(area);
+        assertTrue("the hump closes at both ends, so its area is a number", area.closed);
+        assertEquals(-1, area.from, 0.01f);
+        assertEquals(1, area.to, 0.01f);
+        // The integral of 1 - x^2 from -1 to 1.
+        assertEquals(4f / 3f, area.value, 0.01f);
+        assertFalse("a closed area should read as a number",
+                area.describe(new DecimalFormat("#.###")).contains("∞"));
+    }
+
+    /** Below the axis the hump never closes, so that side runs off to negative infinity. */
+    @Test
+    public void theAreaOutsideAHump_runsOffToInfinity() {
+        GraphView.Graph hump = hump(1, Color.RED);
+
+        GraphView.Area area = GraphView.areaAround(hump, 5);
+
+        assertNotNull(area);
+        assertFalse("nothing closes this side off, so it has no area", area.closed);
+        assertEquals("-∞", area.describe(new DecimalFormat("#.###")));
+    }
+
+    /** A line that leaves the top of the screen and never comes back has no area either. */
+    @Test
+    public void theAreaUnderALineThatKeepsClimbing_isInfinite() {
+        GraphView.Area area = GraphView.areaAround(line(1, Color.RED), 5);
+
+        assertNotNull(area);
+        assertFalse(area.closed);
+        assertEquals("∞", area.describe(new DecimalFormat("#.###")));
+        assertEquals("it should still start where the line crossed the axis", 0, area.from, 0.01f);
     }
 
     @Test
