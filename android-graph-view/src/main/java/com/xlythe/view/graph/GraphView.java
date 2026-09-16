@@ -312,7 +312,7 @@ public class GraphView extends View {
 
             if (j == 0 && mShowAxis) {
                 axisPaint.setStrokeWidth(mAxisWidth);
-                canvas.drawLine(x, mInlineNumbers ? 0 : mLineMargin, x, getHeight(), mGridPaint);
+                canvas.drawLine(x, mInlineNumbers ? 0 : mLineMargin, x, getHeight(), axisPaint);
             } else if (mShowGrid) {
                 mGridPaint.setStrokeWidth(mGridWidth);
                 canvas.drawLine(x, mInlineNumbers ? 0 : mLineMargin, x, getHeight(), mGridPaint);
@@ -394,7 +394,7 @@ public class GraphView extends View {
 
             if (j == 0 && mShowAxis) {
                 axisPaint.setStrokeWidth(mAxisWidth);
-                canvas.drawLine(mInlineNumbers ? 0 : mLineMargin, y, getWidth(), y, mGridPaint);
+                canvas.drawLine(mInlineNumbers ? 0 : mLineMargin, y, getWidth(), y, axisPaint);
             } else if (mShowGrid) {
                 mGridPaint.setStrokeWidth(mGridWidth);
                 canvas.drawLine(mInlineNumbers ? 0 : mLineMargin, y, getWidth(), y, mGridPaint);
@@ -742,9 +742,6 @@ public class GraphView extends View {
     public void setGridSize(int px) {
         mGridWidth = px;
         mGridPaint.setStrokeWidth(mGridWidth);
-        if (mAxisPaint != null) {
-            mAxisPaint.setStrokeWidth(mGridWidth);
-        }
     }
 
     public void setAxisSize(int px) {
