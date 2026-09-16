@@ -1,5 +1,8 @@
 package com.xlythe.view.graph;
 
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
+import android.animation.ValueAnimator;
 import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.content.Context;
@@ -15,6 +18,7 @@ import android.util.AttributeSet;
 import android.util.TypedValue;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.animation.DecelerateInterpolator;
 
 import com.xlythe.math.Point;
 
@@ -34,6 +38,12 @@ public class GraphView extends View {
 
     private static final int DRAG = 1;
     private static final int ZOOM = 2;
+
+    /** How long the zoom buttons take to glide to the next step. */
+    private static final long ZOOM_DURATION = 250;
+
+    /** The numbers a grid line is allowed to stand for, give or take a power of ten. */
+    private static final double[] NICE_NUMBERS = {0.5, 1, 2, 5, 10};
 
     private final List<PanListener> mPanListeners = new ArrayList<>();
     private final List<ZoomListener> mZoomListeners = new ArrayList<>();
@@ -58,6 +68,7 @@ public class GraphView extends View {
     private int mOffsetX;
     private int mOffsetY;
     private int mLineMargin;
+    private int mBaseLineMargin;
     private int mMinLineMargin;
     private int mTextPaintSize;
     private int mTextMargin;
@@ -74,7 +85,9 @@ public class GraphView extends View {
     private int mRemainderX;
     private int mRemainderY;
     private double mZoomInitDistance;
-    private float mZoomInitLevel;
+    private float mZoomInitUnitsPerPixel;
+    @Nullable
+    private ValueAnimator mZoomAnimator;
     private int mMode;
     private int mPointers;
     private boolean mShowGrid = true;
@@ -141,7 +154,11 @@ public class GraphView extends View {
         mDebugPaint.setStyle(Style.STROKE);
         mDebugPaint.setStrokeWidth(mGraphWidth);
 
-        mLineMargin = mMinLineMargin = fromDp(25);
+        mLineMargin = mBaseLineMargin = fromDp(25);
+        // Grid lines stretch to about a third again as far apart as the base before the numbers on
+        // them snap to the next step and the spacing springs back. Leave room for that, or lines
+        // would start dropping out halfway through a pinch.
+        mMinLineMargin = fromDp(15);
 
         zoomReset();
 
@@ -208,6 +225,11 @@ public class GraphView extends View {
                 setMode(event);
                 break;
             case MotionEvent.ACTION_UP:
+                if (mMode == ZOOM) {
+                    // The curves rescaled with the pinch but were never redrawn for the new
+                    // viewport. Now that the fingers are up, it is worth the work.
+                    notifyZoomed();
+                }
                 break;
             case MotionEvent.ACTION_MOVE:
                 if (mMode == DRAG && mPanEnabled) {
@@ -245,9 +267,13 @@ public class GraphView extends View {
                     mGraphIsCentered = false;
                 } else if (mMode == ZOOM && mZoomEnabled) {
                     double distance = getDistance(new Point(event.getX(0), event.getY(0)), new Point(event.getX(1), event.getY(1)));
-                    double delta = mZoomInitDistance - distance;
-                    float zoom = (float) (delta / mZoomInitDistance);
-                    setZoomLevel(mZoomInitLevel + zoom);
+                    if (distance > 0 && mZoomInitDistance > 0) {
+                        // Spreading the fingers apart leaves a pixel worth less of the graph, by
+                        // however much further apart they are than where they started.
+                        zoomTo((float) (mZoomInitUnitsPerPixel * mZoomInitDistance / distance),
+                                (event.getX(0) + event.getX(1)) / 2,
+                                (event.getY(0) + event.getY(1)) / 2);
+                    }
                 }
                 break;
         }
@@ -578,7 +604,16 @@ public class GraphView extends View {
 
     private int getRawX(Point p) {
         if (p == null || Double.isNaN(p.getX()) || Double.isInfinite(p.getX())) return -1;
+        return (int) toPixelX(p.getX());
+    }
 
+    private int getRawY(Point p) {
+        if (p == null || Double.isNaN(p.getY()) || Double.isInfinite(p.getY())) return -1;
+        return (int) toPixelY(p.getY());
+    }
+
+    /** Where on screen, left to right, the graph's {@code x} falls. */
+    public float toPixelX(float x) {
         // The left line is at pos
         float leftLine = (mInlineNumbers ? 0 : mLineMargin) + mRemainderX;
         // And equals
@@ -586,12 +621,11 @@ public class GraphView extends View {
         // And changes at a rate of
         float slope = mLineMargin / mZoomLevel;
         // Put it all together
-        return (int) (slope * (p.getX() - val) + leftLine);
+        return slope * (x - val) + leftLine;
     }
 
-    private int getRawY(Point p) {
-        if (p == null || Double.isNaN(p.getY()) || Double.isInfinite(p.getY())) return -1;
-
+    /** Where on screen, top to bottom, the graph's {@code y} falls. */
+    public float toPixelY(float y) {
         // The top line is at pos
         float topLine = (mInlineNumbers ? 0 : mLineMargin) + mRemainderY;
         // And equals
@@ -599,7 +633,23 @@ public class GraphView extends View {
         // And changes at a rate of
         float slope = mLineMargin / mZoomLevel;
         // Put it all together
-        return (int) (-slope * (p.getY() - val) + topLine);
+        return -slope * (y - val) + topLine;
+    }
+
+    /** The graph's x at this point on screen. The other way round from {@link #toPixelX}. */
+    public float toGraphX(float pixelX) {
+        float leftLine = (mInlineNumbers ? 0 : mLineMargin) + mRemainderX;
+        float val = mOffsetX * mZoomLevel;
+        float slope = mLineMargin / mZoomLevel;
+        return (pixelX - leftLine) / slope + val;
+    }
+
+    /** The graph's y at this point on screen. The other way round from {@link #toPixelY}. */
+    public float toGraphY(float pixelY) {
+        float topLine = (mInlineNumbers ? 0 : mLineMargin) + mRemainderY;
+        float val = -mOffsetY * mZoomLevel;
+        float slope = mLineMargin / mZoomLevel;
+        return -(pixelY - topLine) / slope + val;
     }
 
     private boolean tooFar(float aX, float aY, float bX, float bY) {
@@ -660,18 +710,22 @@ public class GraphView extends View {
                 mDragRemainderY = 0;
                 break;
             case ZOOM:
+                cancelZoomAnimation();
                 mZoomInitDistance = getDistance(new Point(e.getX(0), e.getY(0)), new Point(e.getX(1), e.getY(1)));
-                mZoomInitLevel = mZoomLevel;
+                mZoomInitUnitsPerPixel = mZoomLevel / (float) mLineMargin;
                 break;
         }
     }
 
+    /** How much of the graph one grid line stands for. Always 1, 2 or 5 times a power of ten. */
     public float getZoomLevel() {
         return mZoomLevel;
     }
 
     public void setZoomLevel(float level) {
+        cancelZoomAnimation();
         mZoomLevel = level;
+        mLineMargin = mBaseLineMargin;
         invalidate();
         for (ZoomListener listener : mZoomListeners) {
             listener.zoomApplied(mZoomLevel);
@@ -679,11 +733,114 @@ public class GraphView extends View {
     }
 
     public void zoomIn() {
-        setZoomLevel(mZoomLevel / 2);
+        animateZoomTo(nextNiceNumber(mZoomLevel, false));
     }
 
     public void zoomOut() {
-        setZoomLevel(mZoomLevel * 2);
+        animateZoomTo(nextNiceNumber(mZoomLevel, true));
+    }
+
+    /**
+     * Scales the graph so that a pixel is worth {@code unitsPerPixel}, leaving whatever is under
+     * ({@code focusX}, {@code focusY}) where it is.
+     *
+     * <p>The number a grid line stands for is snapped to the nearest 1, 2 or 5, and the spacing
+     * between lines takes up the difference. So as you pinch, the lines slide apart, and once they
+     * are far enough apart the numbers step to the next size and the spacing springs back.
+     */
+    private void zoomTo(float unitsPerPixel, float focusX, float focusY) {
+        if (unitsPerPixel <= 0 || Float.isNaN(unitsPerPixel) || Float.isInfinite(unitsPerPixel)) {
+            return;
+        }
+
+        float level = (float) snapToNiceNumber(unitsPerPixel * mBaseLineMargin);
+        int lineMargin = Math.max(1, Math.round(level / unitsPerPixel));
+        boolean levelChanged = level != mZoomLevel;
+
+        // Remember where the focus is pointing before the scale changes underneath it.
+        float focusedX = toGraphX(focusX);
+        float focusedY = toGraphY(focusY);
+
+        mZoomLevel = level;
+        mLineMargin = lineMargin;
+        mGraphIsCentered = false;
+
+        // And put it back under the finger.
+        panBy(focusX - toPixelX(focusedX), focusY - toPixelY(focusedY));
+
+        // Only tell listeners when the step changes. They redraw every curve from scratch, which is
+        // far too much work to do on every frame of a pinch, and the curves already scale with us.
+        if (levelChanged) {
+            notifyZoomed();
+        }
+        invalidate();
+    }
+
+    private void notifyZoomed() {
+        for (ZoomListener listener : mZoomListeners) {
+            listener.zoomApplied(mZoomLevel);
+        }
+    }
+
+    private void animateZoomTo(float level) {
+        cancelZoomAnimation();
+        if (getWidth() == 0 || getHeight() == 0) {
+            setZoomLevel(level);
+            return;
+        }
+
+        final float focusX = getWidth() / 2f;
+        final float focusY = getHeight() / 2f;
+        mZoomAnimator = ValueAnimator.ofFloat(mZoomLevel / (float) mLineMargin, level / (float) mBaseLineMargin);
+        mZoomAnimator.setDuration(ZOOM_DURATION);
+        mZoomAnimator.setInterpolator(new DecelerateInterpolator());
+        mZoomAnimator.addUpdateListener(animation ->
+                zoomTo((float) animation.getAnimatedValue(), focusX, focusY));
+        mZoomAnimator.addListener(new AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(Animator animation) {
+                notifyZoomed();
+            }
+        });
+        mZoomAnimator.start();
+    }
+
+    private void cancelZoomAnimation() {
+        if (mZoomAnimator != null) {
+            mZoomAnimator.cancel();
+            mZoomAnimator = null;
+        }
+    }
+
+    /** The nearest number of the form 1, 2 or 5 times a power of ten. */
+    static double snapToNiceNumber(double value) {
+        if (value <= 0 || Double.isNaN(value) || Double.isInfinite(value)) {
+            return 1;
+        }
+
+        double decade = Math.pow(10, Math.floor(Math.log10(value)));
+        double nearest = decade;
+        double nearestRatio = Double.MAX_VALUE;
+        for (double niceNumber : NICE_NUMBERS) {
+            double candidate = decade * niceNumber;
+            double ratio = candidate > value ? candidate / value : value / candidate;
+            if (ratio < nearestRatio) {
+                nearestRatio = ratio;
+                nearest = candidate;
+            }
+        }
+        return nearest;
+    }
+
+    /** The next number of the form 1, 2 or 5 times a power of ten, one step up or down from here. */
+    static float nextNiceNumber(double value, boolean larger) {
+        double from = snapToNiceNumber(value);
+        double decade = Math.pow(10, Math.floor(Math.log10(from) + 1e-6));
+        double mantissa = from / decade;
+        if (larger) {
+            return (float) (decade * (mantissa < 1.5 ? 2 : mantissa < 3.5 ? 5 : 10));
+        }
+        return (float) (decade * (mantissa > 3.5 ? 2 : mantissa > 1.5 ? 1 : 0.5));
     }
 
     public void addGraph(Graph graph) {
@@ -823,11 +980,24 @@ public class GraphView extends View {
     }
 
     public void panBy(float x, float y) {
-        mOffsetX -= (int) x / mLineMargin;
-        mOffsetY -= (int) y / mLineMargin;
-        mRemainderX += (int) x % mLineMargin;
-        mRemainderY += (int) y % mLineMargin;
+        mRemainderX += Math.round(x);
+        mRemainderY += Math.round(y);
+        normalizeOffsets();
         invalidate();
+    }
+
+    /**
+     * Rolls whole grid lines out of the leftover pixels. Without this the leftovers grow without
+     * bound as you pan, and stop meaning "how far past the last line we are".
+     */
+    private void normalizeOffsets() {
+        int linesX = (int) Math.floor((double) mRemainderX / mLineMargin);
+        mOffsetX -= linesX;
+        mRemainderX -= linesX * mLineMargin;
+
+        int linesY = (int) Math.floor((double) mRemainderY / mLineMargin);
+        mOffsetY -= linesY;
+        mRemainderY -= linesY * mLineMargin;
     }
 
     public interface PanListener {

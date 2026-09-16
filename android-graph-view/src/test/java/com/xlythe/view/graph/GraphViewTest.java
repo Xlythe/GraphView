@@ -151,6 +151,27 @@ public class GraphViewTest {
                 0, widestVerticalLine(bitmap, Color.RED, OFF_AXIS_ROW));
     }
 
+    /**
+     * Panning kept its leftover pixels without ever rolling whole grid lines out of them, so a pan
+     * made of many small steps pushed every line off the side of the view.
+     */
+    @Test
+    public void panningInSmallSteps_keepsTheGridOnScreen() {
+        GraphView graph = newGraph();
+        graph.setGridColor(Color.RED);
+        graph.setAxisColor(Color.BLUE);
+
+        for (int i = 0; i < 100; i++) {
+            graph.panBy(7, 7);
+        }
+        Bitmap bitmap = render(graph);
+
+        assertTrue("the vertical grid lines slid off screen",
+                widestVerticalLine(bitmap, Color.RED, OFF_AXIS_ROW) > 0);
+        assertTrue("the horizontal grid lines slid off screen",
+                widestHorizontalLine(bitmap, Color.RED, OFF_AXIS_COLUMN) > 0);
+    }
+
     @Test
     public void theGridLines_areDrawnInTheGridColor() {
         GraphView graph = newGraph();
