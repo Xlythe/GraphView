@@ -6,24 +6,30 @@ Properties projectProperties = new Properties()
 projectProperties.load(rootProject.file('gradle.properties').newDataInputStream())
 
 Properties localProperties = new Properties()
-localProperties.load(project.rootProject.file('local.properties').newDataInputStream())
+File localPropertiesFile = rootProject.file('local.properties')
+if (localPropertiesFile.exists()) {
+    localProperties.load(localPropertiesFile.newDataInputStream())
+}
 
 android {
-    compileSdkVersion 33
+    compileSdk 37
 
     defaultConfig {
-        minSdkVersion 14
-        targetSdkVersion 33
-        versionCode 1
-        versionName project.property("bintray.libraryVersion")
+        minSdk 21
     }
-    buildTypes {
-        release {
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
-        }
-    }
-    lintOptions {
+    lint {
         abortOnError false
+        targetSdk 37
+    }
+    testOptions {
+        unitTests {
+            includeAndroidResources = true
+            all {
+                // Robolectric's newest SDK sandboxes need more than the default heap and this JDK internal.
+                maxHeapSize = '2g'
+                jvmArgs '--add-exports=java.base/jdk.internal.access=ALL-UNNAMED'
+            }
+        }
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
@@ -35,6 +41,7 @@ android {
             withJavadocJar()
         }
     }
+    namespace 'com.xlythe.view.graph'
 }
 
 afterEvaluate {
@@ -85,16 +92,28 @@ afterEvaluate {
 }
 
 signing {
-    useInMemoryPgpKeys(
-            localProperties.getProperty("signing.keyId"),
-            localProperties.getProperty("signing.key"),
-            localProperties.getProperty("signing.password"),
-    )
+    if (localProperties.getProperty("signing.key") != null) {
+        useInMemoryPgpKeys(
+                localProperties.getProperty("signing.keyId"),
+                localProperties.getProperty("signing.key"),
+                localProperties.getProperty("signing.password"),
+        )
+    }
     sign publishing.publications
+}
+
+// Only sign when publishing to Maven Central, so publishToMavenLocal works without signing keys.
+gradle.taskGraph.whenReady { graph ->
+    boolean remote = graph.hasTask("${project.path}:publish") ||
+            graph.hasTask("${project.path}:publishReleasePublicationToMavenCentralRepository")
+    tasks.withType(Sign).configureEach { enabled = remote }
 }
 
 dependencies {
     api fileTree(include: ['*.jar'], dir: 'libs')
     api 'androidx.legacy:legacy-support-v4:[1.0.0,)'
-    api 'com.xlythe:math-library:[1.1.6,)'
+    api 'com.xlythe:math-library:[1.1.7,)'
+    testImplementation 'org.robolectric:robolectric:4.17'
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'androidx.test:core:1.7.0'
 }

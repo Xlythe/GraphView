@@ -1,32 +1,41 @@
 apply plugin: 'com.android.application'
 
 android {
-    compileSdkVersion 33
+    compileSdk 37
 
     defaultConfig {
         applicationId "com.xlythe.sample.graph"
-        minSdkVersion 14
-        targetSdkVersion 33
+        minSdk 21
+        targetSdk 37
         versionCode 6
         versionName "1.0.0"
     }
     buildTypes {
         release {
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
-    lintOptions {
+    lint {
         abortOnError false
+        targetSdk 37
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
     }
+    namespace 'com.xlythe.sample.graph'
 }
 
 dependencies {
+    // kotlin-stdlib 1.8 absorbed the jdk7/jdk8 artifacts, but an old transitive dependency still
+    // asks for 1.6.21 of those, and every class in them then shows up twice. Line them up.
+    constraints {
+        implementation 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22'
+        implementation 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22'
+    }
+
     implementation fileTree(include: ['*.jar'], dir: 'libs')
     implementation project(':android-graph-view')
-    implementation 'androidx.appcompat:appcompat:+'
-    implementation 'androidx.legacy:legacy-support-v4:+'
+    implementation 'androidx.appcompat:appcompat:1.7.1'
+    implementation 'androidx.legacy:legacy-support-v4:1.0.0'
 }
